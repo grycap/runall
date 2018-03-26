@@ -1,2 +1,2 @@
 # bashkeleton
-An skeleton for bash applications
+A skeleton for bash applications
