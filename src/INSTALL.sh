@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# bashkeleton - Skeleton for Bash applications
-# https://github.com/dealfonso/bashkeleton
+# runall - run a command in all servers (from a list)
+# https://github.com/dealfonso/runall
 #
 # Copyright (C) caralla@upv.es
 # Developed by Carlos A. caralla@upv.es
@@ -73,7 +73,7 @@ for i in $APPBASHFLATTENBINFILES; do
   _chmod -R 755 "${PREFIX}/usr/bin/$i"
 done
 
-APPBASHFLATTENBINFILES="bashkeleton"
+APPBASHFLATTENBINFILES="runall"
 for i in $APPBASHFLATTENBINFILES; do
   F="$(basename "$i")"
   ${SRCFOLDER}/bashflatten -C "${SRCFOLDER}/$i" > "${PREFIX}/usr/bin/$F" 

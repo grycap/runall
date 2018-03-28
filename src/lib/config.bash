@@ -14,6 +14,8 @@ function readconf() {
   # First we read the config file
   _TXT_CONF="$(cat "$_CONF_FILE" | sed 's/#.*//g' | sed 's/^[ \t]*//g' | sed 's/[ \t]*$//g' | sed '/^$/d')"
 
+  p_debug "$_TXT_CONF"
+
   # Let's read the lines
   while read L; do
     if [[ "$L" =~ ^\[.*\]$ ]]; then
@@ -22,6 +24,7 @@ function readconf() {
     else
       IFS='=' read _CURRENT_KEY _CURRENT_VALUE <<< "$L"
       _CURRENT_VALUE="$(echo "$_CURRENT_VALUE" | envsubst)"
+      p_debug "$_CURRENT_VALUE"
       read -d '\0' "$_CURRENT_KEY" <<< "${_CURRENT_VALUE}"
     fi
   done <<< "$_TXT_CONF"

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# bashkeleton - Skeleton for Bash applications
-# https://github.com/dealfonso/bashkeleton
+# runall - run a command in all servers (from a list)
+# https://github.com/dealfonso/runall
 #
 # Copyright (C) caralla@upv.es
 # Developed by Carlos A. caralla@upv.es
@@ -40,6 +40,7 @@ REVISION=${VERSION##*-}
 VERSION=${VERSION%%-*}
 
 FNAME=build/${APPNAME}_${VERSION}-${REVISION}
+rm -rf "${FNAME}"
 mkdir -p "${FNAME}/DEBIAN"
 
 ${SRCFOLDER}/INSTALL.sh "${SRCFOLDER}" "${FNAME}"
@@ -50,10 +51,11 @@ Version: ${VERSION}-${REVISION}
 Section: base
 Priority: optional
 Architecture: all
-Depends: bash, libc-bin, coreutils
+Depends: bash, libc-bin, coreutils, grep, openssh-client
 Maintainer: Carlos A. <caralla@upv.es>
 Description: ${APPNAME}
- skeleton of a bash application
+ run a command in a list of servers. It makes parallel runs
+ and other features.
 EOF
 
 cat > "${FNAME}/DEBIAN/postinst" <<\EOF
@@ -68,6 +70,7 @@ chmod +x "${FNAME}/DEBIAN/postinst"
 chmod +x "${FNAME}/DEBIAN/postrm"
 
 cat > "${FNAME}/DEBIAN/conffiles" <<\EOF
+/etc/runall/runall.conf
 EOF
 
 cd "${FNAME}"

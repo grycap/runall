@@ -1,0 +1,314 @@
+#!/bin/bash
+#
+# runall - run a command in all nodes
+# https://github.com/dealfonso/runall
+#
+# Copyright (C) GRyCAP - I3M - UPV 
+# Developed by Carlos A. caralla@upv.es
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+function usage() {
+  cat <<EOF
+
+runall is a tool that runs a command in multiple hosts, using SSH to them. It is highly advised
+  to configure ssh without password for better experience. In special, in case that you run commands
+  in background, this command will not work properly.
+
+$0 <options> -- [ <commandline> ]
+
+  <commandline>             The whole commandline that you want to run in the hosts.
+                            * if not provided, it will be read from stdin.
+  --user | -u <username>    Sets the user to ssh with (i.e. will ssh <username>@host instead of ssh host)
+  --localhost | -l          Runs the command also in localhost
+  --shell | -s <shell command>
+                            Set the shell to use when running the commands in the remote servers
+                            * the default value is "sh" (other choices bash, ash, etc.)
+  --summarize | -S          Summarize what is going to happen and wait for user confirmation
+  --ask | -a                Confirm each command before running it in the destination host
+                            (this will not happen when running in background)
+  --override-hosts | -O     Override the list of hosts in the configuration file
+  --hostlist | -H <hostlist>
+                            The list of hosts where the command is being run. This parameter can
+                            appear as many time as needed. The format is a comma separated list of
+                            hostnames. The list can contain numerical ranges [BEGINNING-END] that
+                            will be expanded (e.g. myhost1,myhost[2-3] will be translated into
+                            myhost1,myhost2,myhost3).
+  --exclude-hostlist | -X <hostlist>
+                            Host list in which the command is not being run. The format is the same
+                            than in --hostlist. Notice that this list has more priority than the
+                            --hostlist.
+  --mute | -m               Mute the output (i.e. redirect it to /dev/null).
+  --background | -b         Run the commmands in background. In that case, the output of each run
+                            will be to a random file with the prefix /tmp/runall-hostname-* that will
+                            be left in the host in which the command is run.
+  --quiet | -q              Makes the command quiet (it will override --summarize and --ask)
+  --version | -V            Shows the version number and finalizes.
+  --verbose | -v            Shows more information about the procedure.
+  --debug                   Shows a lot more information about the procedure.
+  --help | -h               Shows this help and exits.
+
+EOF
+}
+
+function verify_dependencies() {
+  if ! cat --version >/dev/null 2>&1; then
+    finalize 1 "cat is needed"
+  fi
+  if ! grep --version >/dev/null 2>&1; then
+    finalize 1 "grep is needed"
+  fi
+  if ! ssh -V >/dev/null 2>&1; then
+    finalize 1 "ssh is needed"
+  fi
+}
+
+# Some basic includes
+source lib/debug.bash
+source lib/temp.bash
+source lib/utils.bash
+source lib/config.bash
+source version
+
+# Parse the commandline into an array
+commandline_to_array ARR "$@"
+
+_HOSTS_LIST=( )
+_EXCLUDED_HOSTS_LIST=( )
+
+function expand_ranges() {
+  local OP="$1"
+  local NAME="$2"
+  local RANGE="$(echo "$NAME" | grep -o '\[[0-9]\{1,\}-[0-9]\{1,\}\]' | head -1)"
+  if [ "$RANGE" != "" ]; then
+    RANGE="${RANGE:1:-1}"
+    PATTERN="\[${RANGE}\]"
+    p_info "range detected: $RANGE"
+    IFS='-' read L_LIMIT U_LIMIT <<< "$RANGE"
+    for v in $(seq "$L_LIMIT" "$U_LIMIT"); do 
+      HOST="${NAME/$PATTERN/$v}"
+      hostlist "$OP" "$HOST"
+    done
+    return 0
+  fi
+  return 1
+}
+
+function hostlist() {
+  local OP="$1"
+  local HOSTS="$2"
+  local HOST
+  while read -d ',' HOST; do
+    if [ "$HOST" != "" ]; then
+      if ! expand_ranges "$OP" "$HOST"; then
+        if [ "$OP" == "A" ]; then
+          p_debug "adding $HOST"
+          _HOSTS_LIST+=("$HOST")
+        else
+          p_debug "removing $HOST"
+          _EXCLUDED_HOSTS_LIST+=("$HOST")
+        fi
+      fi
+    fi
+  done <<< "${HOSTS},"
+}
+
+CONFIGFILE="/etc/runall/runall.conf"
+n=0
+while [ $n -lt ${#ARR[@]} ]; do
+  PARAM="${ARR[$n]}"
+  case "$PARAM" in
+    --user|-u)              n=$(($n+1))
+                            SSHUSER="${ARR[$n]}";;
+    --shell|-s)             n=$((n+1))
+                            OVERRIDESHELL="${ARR[$n]}";;
+    --quiet|-q)             QUIET=true;;
+    --localhost|-l)         RUNLOCALHOST=true;;
+    --summarize|-S)         SUMMARIZE=true;;
+    --ask|-a)               ASK=true;;
+    --override-hosts|-O)    OVERRIDEHOSTS=true;;
+    --hostlist|-H)          n=$((n+1))
+                            hostlist A "${ARR[$n]}";;
+    --exclude-hostlist|-X)  n=$((n+1))
+                            hostlist D "${ARR[$n]}";;
+    --mute|-m)              MUTEOUTPUT=true;;
+    --background|-b)        BACKGROUND=true;;
+    --verbose|-v)           VERBOSE=true;;
+    --debug)                DEBUG=true
+                            VERBOSE=true;;
+    --config|-c)            n=$((n+1))
+                            CONFIGFILE="${ARR[$n]}";;
+    --version | -V)         echo "$VERSION" && finalize;;
+    --help | -h)            usage && finalize;;
+    --)                     n=$(($n+1))
+                            while [ $n -lt ${#ARR[@]} ]; do
+                              PARAM="${ARR[$n]}"
+                              COMMAND+=("$PARAM")
+                              n=$(($n+1))
+                            done;;
+    *)                      usage && finalize 1 "invalid parameter $PARAM";;
+  esac
+  n=$(($n+1))
+done
+
+verify_dependencies
+
+# Read the config file (a simple bash file that will be sourced)
+if [ ! -e "$CONFIGFILE" ]; then
+  p_warning "ignoring config file $CONFIGFILE because it does not exist"
+else
+  if ! source "$CONFIGFILE"; then
+    finalize 1 "could not read config from file $CONFIGFILE"
+  fi
+
+  if [ "$HOSTS" != "" ]; then
+    if [ "$OVERRIDEHOSTS" != "true" ]; then
+      hostlist A "$HOSTS"
+    else
+      p_info "overriding hosts from config file"
+    fi
+  fi
+fi
+
+# Add the local host (if requested)
+if [ "$RUNLOCALHOST" == "true" ]; then
+  hostlist A "$(hostname)"
+fi
+
+# Exclude the hosts (if needed)
+_NEW_HOSTS_LIST=()
+for ((i=0; i<${#_HOSTS_LIST[@]}; i=i+1)); do
+  EXCLUDE=false
+  for ((j=0; j<${#_EXCLUDED_HOSTS_LIST[@]};j=j+1)); do
+    if [ "${_HOSTS_LIST[$i]}" == "${_EXCLUDED_HOSTS_LIST[$j]}" ]; then
+      EXCLUDE=true
+      break
+    fi
+  done
+  if [ "$EXCLUDE" == "false" ]; then
+    _NEW_HOSTS_LIST+=("${_HOSTS_LIST[$i]}")
+  fi
+done
+_HOSTS_LIST=("${_NEW_HOSTS_LIST[@]}")
+
+# If we have no host to run in, finalize
+if [ ${#_HOSTS_LIST} -eq 0 ]; then
+  finalize 0 "no hosts where to run"
+fi
+
+# Check if we have a shell or not
+if [ "$SHELL" == "" ]; then
+  p_debug "setting default shell sh"
+  SHELL=sh
+fi
+
+# The shell can be overrided in the commandline
+if [ "$OVERRIDESHELL" != "" ]; then
+  p_debug "overriding shell $SHELL with $OVERRIDESHELL"
+  SHELL="$OVERRIDESHELL"
+fi
+
+# Read the command from the commandline
+if [ "$COMMAND" = "" ]; then
+    p_out "Type a set of command and hit CTRL-D to issue them in the hosts (CTRL-C aborts)"
+    COMMAND="$(cat)"
+fi
+
+# If we have no command to run, finalize
+if [ "$COMMAND" == "" ]; then
+  finalize 0 "no command stated"
+fi
+
+# Summarize what is going to happen (if requested)
+if [ "$SUMMARIZE" == "true" ]; then
+  p_out "
+SUMMARY:
+hosts: 
+${_HOSTS_LIST[@]}
+
+command:
+$PREFIX
+$COMMAND
+"
+  if [ "$QUIET" != "true" ]; then
+    read -p "press return to continue (CTRL-C aborts) "
+  fi
+fi
+
+SEPARATOR="$(cat /proc/sys/kernel/random/uuid)"
+
+function runin() {
+  # Run a command in a host (and redirect the output to a file (- means stdout))
+  local HOST="$1"
+  local REDIRECT="$2"
+  shift
+  shift
+  local COMMAND=("$SHELL" "-s")
+  if [ "$REDIRECT" != "-" ]; then
+    COMMAND+=(">$REDIRECT")
+    COMMAND+=("2>&1")
+  fi
+  if [ "$SSHUSER" != "" ]; then
+    HOST="${SSHUSER}@${HOST}"
+  fi
+  ssh $SSHOPTIONS "$HOST" "${COMMAND[@]}" <<$SEPARATOR
+$@
+$SEPARATOR
+}
+
+# Start running
+for ((n=0;n<${#_HOSTS_LIST[@]};n=n+1)); do
+  if [ "$BACKGROUND" == "true" ]; then
+    # We are running the command in background
+    if [ "$MUTEOUTPUT" == "true" ]; then
+      FILE=/dev/null
+    else
+      FILE="/tmp/runall-${_HOSTS_LIST[$n]}-$(date +%Y%m%d%H%M%S)"
+      p_info "leaving output in file $FILE at ${_HOSTS_LIST[$n]}"
+      p_out "$FILE"
+    fi
+
+    # Double fork will detach the process
+    ((runin "${_HOSTS_LIST[$n]}" "$FILE" "${COMMAND[@]}")&)
+  else
+    # We are running in sequential
+    SHOULDRUN=true
+    if [ "$ASK" == "true" ]; then
+      # If requested to ask for each run, ask the user
+      p_info "running in ${_HOSTS_LIST[$n]}"
+      if [ "$QUIET" != "true" ]; then
+        read -p "run in ${_HOSTS_LIST[$n]}? (Y/n) "  SHOULDRUN 
+      fi
+
+      # The default is true and we should only admit "n", but will admit also "no" to skip running
+      SHOULDRUN="${SHOULDRUN,,}"
+      if [ "$SHOULDRUN" == "n" -o "$SHOULDRUN" == "no" ]; then
+        SHOULDRUN=false
+      else
+        SHOULDRUN=true
+      fi
+    fi
+    if [ "$SHOULDRUN" == "true" ]; then
+      # If we have to run the command, let's run it
+      p_debug "running in ${_HOSTS_LIST[$n]}"
+      if [ "$MUTEOUTPUT" == "true" ]; then
+        runin "${_HOSTS_LIST[$n]}" - "${COMMAND[@]}" > /dev/null 2> /dev/null
+      else
+        runin "${_HOSTS_LIST[$n]}" - "${COMMAND[@]}"
+      fi
+    else
+      p_debug "skipping run in ${_HOSTS_LIST[$n]}"
+    fi
+  fi
+done
