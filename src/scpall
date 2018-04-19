@@ -195,13 +195,13 @@ for ((f=0;f<${#FILELIST[@]};f=f+1)); do
       p_debug "running in ${_HOSTS_LIST[$n]}"
       if [ "$MUTEOUTPUT" == "true" ]; then
         runin "${_HOSTS_LIST[$n]}" - "mkdir" "-p" "$DSTFOLDER" > /dev/null 2> /dev/null
-        scp "$SCPOPTIONS" "${RECURSE}" "${SRCFILE}" "${TOHOST}:${DSTFOLDER}" > /dev/null 2> /dev/null
+        scp $SCPOPTIONS ${RECURSE} "${SRCFILE}" "${TOHOST}:${DSTFOLDER}" > /dev/null 2> /dev/null
         if [ $? -ne 0 ]; then
           FAILS=$((FAILS+1))
         fi
       else
         runin "${_HOSTS_LIST[$n]}" - "mkdir" "-p" "$DSTFOLDER"
-        scp "$SCPOPTIONS" "${RECURSE}" "${SRCFILE}" "${TOHOST}:${DSTFOLDER}"
+        scp $SCPOPTIONS ${RECURSE} "${SRCFILE}" "${TOHOST}:${DSTFOLDER}"
         if [ $? -ne 0 ]; then
           FAILS=$((FAILS+1))
         fi
