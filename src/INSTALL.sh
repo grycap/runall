@@ -73,7 +73,7 @@ for i in $APPBASHFLATTENBINFILES; do
   _chmod -R 755 "${PREFIX}/usr/bin/$i"
 done
 
-APPBASHFLATTENBINFILES="runall"
+APPBASHFLATTENBINFILES="runall scpall"
 for i in $APPBASHFLATTENBINFILES; do
   F="$(basename "$i")"
   ${SRCFOLDER}/bashflatten -C "${SRCFOLDER}/$i" > "${PREFIX}/usr/bin/$F" 

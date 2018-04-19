@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# runall - run a command in all nodes
+# scpall - scp files to all nodes
 # https://github.com/dealfonso/runall
 #
 # Copyright (C) GRyCAP - I3M - UPV 
@@ -22,22 +22,22 @@
 function usage() {
   cat <<EOF
 
-runall is a tool that runs a command in multiple hosts, using SSH to them. It is highly advised
-  to configure ssh without password for better experience. In special, in case that you run commands
-  in background, this command will not work properly.
+scpall is a tool that scps files to multiple hosts, using SCP command. It is highly advised
+  to configure ssh without password for better experience. If no folder provided, the files
+  are copied to its location in the host from their are copied.
 
-$0 <options> -- [ <commandline> ]
+$0 <options> <files1> <file2> ... <fileN>
 
   <commandline>             The whole commandline that you want to run in the hosts.
                             * if not provided, it will be read from stdin.
-  --user | -u <username>    Sets the user to ssh with (i.e. will ssh <username>@host instead of ssh host)
-  --localhost | -l          Runs the command also in localhost
-  --shell | -s <shell command>
-                            Set the shell to use when running the commands in the remote servers
-                            * the default value is "sh" (other choices bash, ash, etc.)
+  --user | -u <username>    Sets the user to scp with (i.e. will scp <username>@host:... instead of 
+                            the current user).
   --summarize | -S          Summarize what is going to happen and wait for user confirmation
   --ask | -a                Confirm each command before running it in the destination host
                             (this will not happen when running in background)
+  --folder | -f <folder>    Copies to folder <folder>, instead of the original location.
+  --make-folder | -M        Make the folder previous to trying to copy the files (on each host).
+  --recurse | -r            Copy recursively.
   --override-hosts | -O     Override the list of hosts in the configuration file
   --hostlist | -H <hostlist>
                             The list of hosts where the command is being run. This parameter can
@@ -50,9 +50,6 @@ $0 <options> -- [ <commandline> ]
                             than in --hostlist. Notice that this list has more priority than the
                             --hostlist.
   --mute | -m               Mute the output (i.e. redirect it to /dev/null).
-  --background | -b         Run the commmands in background. In that case, the output of each run
-                            will be to a random file with the prefix /tmp/runall-hostname-* that will
-                            be left in the host in which the command is run.
   --quiet | -q              Makes the command quiet (it will override --summarize and --ask)
   --version | -V            Shows the version number and finalizes.
   --verbose | -v            Shows more information about the procedure.
@@ -85,17 +82,22 @@ source version
 # Parse the commandline into an array
 commandline_to_array ARR "$@"
 
-CONFIGFILE="/etc/runall/runall.conf"
+RECURSE=false
+FILELIST=()
+SCPUSER="$(whoami)"
+CONFIGFILE="/etc/runall/scpall.conf"
 n=0
 while [ $n -lt ${#ARR[@]} ]; do
   PARAM="${ARR[$n]}"
   case "$PARAM" in
+    --prefix|-p)            n=$(($n+1))
+                            PREFIX="${ARR[$n]}";;
+    --folder|-f)            n=$(($n+1))
+                            FOLDER="${ARR[$n]}";;
     --user|-u)              n=$(($n+1))
-                            SSHUSER="${ARR[$n]}";;
-    --shell|-s)             n=$((n+1))
-                            OVERRIDESHELL="${ARR[$n]}";;
+                            SCPUSER="${ARR[$n]}";;
     --quiet|-q)             QUIET=true;;
-    --localhost|-l)         RUNLOCALHOST=true;;
+    --make-folder|-M)       MAKEFOLDER=true;;
     --summarize|-S)         SUMMARIZE=true;;
     --ask|-a)               ASK=true;;
     --override-hosts|-O)    OVERRIDEHOSTS=true;;
@@ -104,63 +106,32 @@ while [ $n -lt ${#ARR[@]} ]; do
     --exclude-hostlist|-X)  n=$((n+1))
                             hostlist D "${ARR[$n]}";;
     --mute|-m)              MUTEOUTPUT=true;;
-    --background|-b)        BACKGROUND=true;;
     --verbose|-v)           VERBOSE=true;;
+    --recurse|-r)           RECURSE=true;;
     --debug)                DEBUG=true
                             VERBOSE=true;;
     --config|-c)            n=$((n+1))
                             CONFIGFILE="${ARR[$n]}";;
     --version | -V)         echo "$VERSION" && finalize;;
     --help | -h)            usage && finalize;;
-    --)                     n=$(($n+1))
-                            while [ $n -lt ${#ARR[@]} ]; do
-                              PARAM="${ARR[$n]}"
-                              COMMAND+=("$PARAM")
-                              n=$(($n+1))
-                            done;;
-    *)                      usage && finalize 1 "invalid parameter $PARAM";;
+    *)                      FILELIST+=("$PARAM");;
   esac
   n=$(($n+1))
 done
 
 verify_dependencies
 
-
 readconfig "$CONFIGFILE" "$OVERRIDEHOSTS"
-
-# Add the local host (if requested)
-if [ "$RUNLOCALHOST" == "true" ]; then
-  hostlist A "$(hostname)"
-fi
-
 excludehosts
 
 # If we have no host to run in, finalize
 if [ ${#_HOSTS_LIST} -eq 0 ]; then
-  finalize 0 "no hosts where to run"
-fi
-
-# Check if we have a shell or not
-if [ "$SHELL" == "" ]; then
-  p_debug "setting default shell sh"
-  SHELL=sh
-fi
-
-# The shell can be overrided in the commandline
-if [ "$OVERRIDESHELL" != "" ]; then
-  p_debug "overriding shell $SHELL with $OVERRIDESHELL"
-  SHELL="$OVERRIDESHELL"
-fi
-
-# Read the command from the commandline
-if [ "$COMMAND" = "" ]; then
-    p_out "Type a set of command and hit CTRL-D to issue them in the hosts (CTRL-C aborts)"
-    COMMAND="$(cat)"
+  finalize 0 "no hosts where to copy"
 fi
 
 # If we have no command to run, finalize
-if [ "$COMMAND" == "" ]; then
-  finalize 0 "no command stated"
+if [ ${#FILELIST[@]} -eq 0 ]; then
+  finalize 0 "no files selected to copy"
 fi
 
 # Summarize what is going to happen (if requested)
@@ -170,37 +141,44 @@ SUMMARY:
 hosts: 
 ${_HOSTS_LIST[@]}
 
-command:
-$PREFIX
-$COMMAND
+files:
+${FILELIST[@]}
+
+recurse: ${RECURSE}
 "
   if [ "$QUIET" != "true" ]; then
     read -p "press return to continue (CTRL-C aborts) "
   fi
 fi
 
-# Start running
-for ((n=0;n<${#_HOSTS_LIST[@]};n=n+1)); do
-  if [ "$BACKGROUND" == "true" ]; then
-    # We are running the command in background
-    if [ "$MUTEOUTPUT" == "true" ]; then
-      FILE=/dev/null
-    else
-      FILE="/tmp/runall-${_HOSTS_LIST[$n]}-$(date +%Y%m%d%H%M%S)"
-      p_info "leaving output in file $FILE at ${_HOSTS_LIST[$n]}"
-      p_out "$FILE"
-    fi
+if [ "$RECURSE" == "true" ]; then
+  RECURSE=-r
+else
+  RECURSE=
+fi
 
-    # Double fork will detach the process
-    ((runin "${_HOSTS_LIST[$n]}" "$FILE" "${COMMAND[@]}")&)
-  else
+# Start running
+FAILS=0
+for ((f=0;f<${#FILELIST[@]};f=f+1)); do
+  for ((n=0;n<${#_HOSTS_LIST[@]};n=n+1)); do
     # We are running in sequential
+    SRCFILE="${FILELIST[$f]}"
+    TOHOST="${SCPUSER}@${_HOSTS_LIST[$n]}"
+    DSTFILE="${FILELIST[$f]}"
+    if [ "$FOLDER" != "" ]; then
+      DSTFILE="${FOLDER}/$(basename "${DSTFILE}")"
+    fi
+    DSTFOLDER="$(dirname "$DSTFILE")"
+    if [ "$MAKEFOLDER" == "true" ]; then
+      p_info "ssh $TOHOST sh -c \"mkdir -p $DSTFOLDER\""
+    fi
+    p_info "scp ${RECURSE} ${SRCFILE} ${TOHOST}:${DSTFOLDER}"
+
     SHOULDRUN=true
     if [ "$ASK" == "true" ]; then
       # If requested to ask for each run, ask the user
-      p_info "running in ${_HOSTS_LIST[$n]}"
       if [ "$QUIET" != "true" ]; then
-        read -p "run in ${_HOSTS_LIST[$n]}? (Y/n) "  SHOULDRUN 
+        read -p "copy? (Y/n) "  SHOULDRUN 
       fi
 
       # The default is true and we should only admit "n", but will admit also "no" to skip running
@@ -211,16 +189,27 @@ for ((n=0;n<${#_HOSTS_LIST[@]};n=n+1)); do
         SHOULDRUN=true
       fi
     fi
+
     if [ "$SHOULDRUN" == "true" ]; then
       # If we have to run the command, let's run it
       p_debug "running in ${_HOSTS_LIST[$n]}"
       if [ "$MUTEOUTPUT" == "true" ]; then
-        runin "${_HOSTS_LIST[$n]}" - "${COMMAND[@]}" > /dev/null 2> /dev/null
+        runin "${_HOSTS_LIST[$n]}" - "mkdir" "-p" "$DSTFOLDER" > /dev/null 2> /dev/null
+        scp "$SCPOPTIONS" "${RECURSE}" "${SRCFILE}" "${TOHOST}:${DSTFOLDER}" > /dev/null 2> /dev/null
+        if [ $? -ne 0 ]; then
+          FAILS=$((FAILS+1))
+        fi
       else
-        runin "${_HOSTS_LIST[$n]}" - "${COMMAND[@]}"
+        runin "${_HOSTS_LIST[$n]}" - "mkdir" "-p" "$DSTFOLDER"
+        scp "$SCPOPTIONS" "${RECURSE}" "${SRCFILE}" "${TOHOST}:${DSTFOLDER}"
+        if [ $? -ne 0 ]; then
+          FAILS=$((FAILS+1))
+        fi
       fi
     else
       p_debug "skipping run in ${_HOSTS_LIST[$n]}"
     fi
-  fi
+  done
 done
+
+finalize $FAILS
