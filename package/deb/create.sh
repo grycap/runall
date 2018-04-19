@@ -56,6 +56,8 @@ Maintainer: Carlos A. <caralla@upv.es>
 Description: ${APPNAME}
  run a command in a list of servers. It makes parallel runs
  and other features.
+ scp files to a list of servers, putting them in their original
+ location.
 EOF
 
 cat > "${FNAME}/DEBIAN/postinst" <<\EOF
@@ -71,6 +73,7 @@ chmod +x "${FNAME}/DEBIAN/postrm"
 
 cat > "${FNAME}/DEBIAN/conffiles" <<\EOF
 /etc/runall/runall.conf
+/etc/runall/scpall.conf
 EOF
 
 cd "${FNAME}"
