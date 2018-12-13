@@ -61,77 +61,87 @@ EOF
 
 function verify_dependencies() {
   if ! cat --version >/dev/null 2>&1; then
-    finalize 1 "cat is needed"
+    bashc.finalize 1 "cat is needed"
   fi
   if ! grep --version >/dev/null 2>&1; then
-    finalize 1 "grep is needed"
+    bashc.finalize 1 "grep is needed"
   fi
   if ! ssh -V >/dev/null 2>&1; then
-    finalize 1 "ssh is needed"
+    bashc.finalize 1 "ssh is needed"
   fi
 }
 
 # Some basic includes
-source lib/debug.bash
-source lib/temp.bash
-source lib/utils.bash
-source lib/config.bash
-source lib/common.bash
+source debug.bashc
+source parameters.bashc
+source utils.bashc
+source config.bashc
 source version
+source inc/common.bash
 
 # Parse the commandline into an array
-commandline_to_array ARR "$@"
+bashc.parameter_parse_commandline "$@"
+bashc.parameters_start
 
 RECURSE=false
 FILELIST=()
 SCPUSER="$(whoami)"
-CONFIGFILE="/etc/runall/scpall.conf"
-n=0
-while [ $n -lt ${#ARR[@]} ]; do
-  PARAM="${ARR[$n]}"
+CONFIGFILE="/etc/runall/scpall.conf /etc/scpall.conf etc/scpall.conf"
+while bashc.parameters_next; do
+  PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
-    --prefix|-p)            n=$(($n+1))
-                            PREFIX="${ARR[$n]}";;
-    --folder|-f)            n=$(($n+1))
-                            FOLDER="${ARR[$n]}";;
-    --user|-u)              n=$(($n+1))
-                            SCPUSER="${ARR[$n]}";;
+    --prefix|-p)            bashc.parameters_next
+                            PREFIX="$(bashc.parameters_current)";;
+    --folder|-f)            bashc.parameters_next
+                            FOLDER="$(bashc.parameters_current)";;
+    --user|-u)              bashc.parameters_next
+                            SCPUSER="$(bashc.parameters_current)";;
     --quiet|-q)             QUIET=true;;
     --make-folder|-M)       MAKEFOLDER=true;;
     --summarize|-S)         SUMMARIZE=true;;
     --ask|-a)               ASK=true;;
     --override-hosts|-O)    OVERRIDEHOSTS=true;;
-    --hostlist|-H)          n=$((n+1))
-                            hostlist A "${ARR[$n]}";;
-    --exclude-hostlist|-X)  n=$((n+1))
-                            hostlist D "${ARR[$n]}";;
+    --hostlist|-H)          bashc.parameters_next
+                            hostlist A "$(bashc.parameters_current)";;
+    --exclude-hostlist|-X)  bashc.parameters_next
+                            hostlist D "$(bashc.parameters_current)";;
     --mute|-m)              MUTEOUTPUT=true;;
     --verbose|-v)           VERBOSE=true;;
     --recurse|-r)           RECURSE=true;;
     --debug)                DEBUG=true
                             VERBOSE=true;;
-    --config|-c)            n=$((n+1))
-                            CONFIGFILE="${ARR[$n]}";;
-    --version | -V)         echo "$VERSION" && finalize;;
-    --help | -h)            usage && finalize;;
+    --config|-c)            bashc.parameters_next
+                            CONFIGFILE="$(bashc.parameters_current)";;
+    --version | -V)         echo "$VERSION" && bashc.finalize;;
+    --help | -h)            usage && bashc.finalize;;
     *)                      FILELIST+=("$PARAM");;
   esac
-  n=$(($n+1))
 done
 
 verify_dependencies
 
-readconfig "$CONFIGFILE" "$OVERRIDEHOSTS"
+bashc.readconffiles "$CONFIGFILE" HOSTS SCPOPTIONS SSHOPTIONS
+
+if [ "$HOSTS" != "" ]; then
+  if [ "$OVERRIDEHOSTS" != "true" ]; then
+    hostlist P "$HOSTS"
+  else
+    p_info "overriding hosts from config file"
+  fi
+fi
+
+bashc.dump_vars HOSTS PREFIX SSHOPTIONS SHELL
+
 excludehosts
 
 # If we have no host to run in, finalize
 if [ ${#_HOSTS_LIST} -eq 0 ]; then
-  finalize 0 "no hosts where to copy"
+  bashc.finalize 0 "no hosts where to copy"
 fi
 
 # If we have no command to run, finalize
 if [ ${#FILELIST[@]} -eq 0 ]; then
-  finalize 0 "no files selected to copy"
+  bashc.finalize 0 "no files selected to copy"
 fi
 
 # Summarize what is going to happen (if requested)
@@ -172,7 +182,7 @@ for ((f=0;f<${#FILELIST[@]};f=f+1)); do
     if [ "$MAKEFOLDER" == "true" ]; then
       p_info "ssh $TOHOST sh -c \"mkdir -p $DSTFOLDER\""
     fi
-    p_info "scp ${RECURSE} ${SRCFILE} ${TOHOST}:${DSTFOLDER}"
+    p_debug "scp ${RECURSE} ${SRCFILE} ${TOHOST}:${DSTFOLDER}"
 
     SHOULDRUN=true
     if [ "$ASK" == "true" ]; then
@@ -192,7 +202,7 @@ for ((f=0;f<${#FILELIST[@]};f=f+1)); do
 
     if [ "$SHOULDRUN" == "true" ]; then
       # If we have to run the command, let's run it
-      p_debug "running in ${_HOSTS_LIST[$n]}"
+      p_info "scp ${RECURSE} ${SRCFILE} ${TOHOST}:${DSTFOLDER}"
       if [ "$MUTEOUTPUT" == "true" ]; then
         runin "${_HOSTS_LIST[$n]}" - "mkdir" "-p" "$DSTFOLDER" > /dev/null 2> /dev/null
         scp $SCPOPTIONS ${RECURSE} "${SRCFILE}" "${TOHOST}:${DSTFOLDER}" > /dev/null 2> /dev/null
@@ -212,4 +222,4 @@ for ((f=0;f<${#FILELIST[@]};f=f+1)); do
   done
 done
 
-finalize $FAILS
+bashc.finalize $FAILS

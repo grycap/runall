@@ -1,0 +1,15 @@
+PACKAGE=runall
+VERSION=1.2-beta.0
+SUMMARY="runall runs a command in a list of servers. scpall scps files to a list of servers, putting them in their original location."
+LICENSE="Apache 2.0"
+URL="https://github.com/grycap/runall"
+DESCRIPTION="runall runs a command in a list of servers. It makes parallel runs and other features. scpall scps files to a list of servers, putting them in their original location. More info at $URL"
+PACKAGER="Carlos de Alfonso <caralla@upv.es>"
+# DEPENDS is for DEB packages
+DEPENDS="bash, libc-bin, coreutils, grep, uuid-runtime, gettext-base, openssh-client"
+# REQUIRES is for RPM packages
+REQUIRES="bash coreutils grep gettext openssh-clients"
+
+/usr/share/$PACKAGE/;src/version:LICENSE
+/etc/$PACKAGE/;src/etc/*.conf
+/usr/bin/;src/runall:src/scpall;bashc -o $SOURCEFOLDER/$FILEPATH -cCSR $SOURCEFOLDER/${FILEPATH}.bashc;chmod +x $SOURCEFOLDER/$FILEPATH
