@@ -10,9 +10,9 @@ Get the appropriate package and install
 **Ubuntu**
 
 ```
-$ wget https://github.com/dealfonso/runall/releases/download/1.0-beta/runall_1.0-beta.0.deb
+$ wget https://github.com/grycap/runall/releases/download/1.2-beta0/runall_1.2-beta.0.deb
 $ apt update
-$ apt install -f ./runall_1.0-beta.0.deb
+$ apt install -f ./runall_1.2-beta.0.deb
 ```
 
 ### From sources
@@ -22,20 +22,20 @@ Install dependencies
 **Ubuntu**
 
 ```
-$ apt update && apt install -y coreutils grep ssh-client
+$ apt update && apt install -y bash libc-bin coreutils grep uuid-runtime gettext-base openssh-client
 ```
 
 **CenOS**
 ```
-$ yum update && yum install -y openssh-clients grep coreutils
+$ yum update && yum install -y bash coreutils grep gettext openssh-clients
 ```
 
-Get the code and install
+Get the code and execute
 
 ```
 $ git clone https://github.com/dealfonso/runall
-$ cd runall/src
-$ ./INSTALL.sh
+$ cd runall
+$ ./runall --help
 ```
 
 ## Usage
