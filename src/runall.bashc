@@ -63,6 +63,7 @@ EOF
 }
 
 function verify_dependencies() {
+  return 0
   if ! cat --version >/dev/null 2>&1; then
     bashc.finalize 1 "cat is needed"
   fi
@@ -112,7 +113,7 @@ while bashc.parameters_next; do
                             CONFIGFILE="$(bashc.parameters_current)";;
     --version | -V)         echo "$VERSION" && bashc.finalize;;
     --help | -h)            usage && bashc.finalize;;
-    --)                     COMMAND+=("$PARAM")
+    --)                     
                             while bashc.parameters_next; do
                               PARAM="$(bashc.parameters_current)"
                               COMMAND+=("$PARAM")

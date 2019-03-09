@@ -45,6 +45,8 @@ function runin() {
     HOST="${SSHUSER}@${HOST}"
   fi
   ssh $SSHOPTIONS "$HOST" "${COMMAND[@]}" <<$_RUN_SEPARATOR
+export BASHC_HOST=$HOST
+export BASHC_COMMAND="$@"
 $@
 $_RUN_SEPARATOR
 }
