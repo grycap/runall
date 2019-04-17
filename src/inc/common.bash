@@ -10,7 +10,7 @@ function hostlist() {
       local H_EXPANDED=()
       while read HNAME; do
         H_EXPANDED+=("$HNAME")
-      done <<< "$(bashc.expand_ranges "$HOSTS")"
+      done <<< "$(bashc.expand_ranges "$HOST")"
       p_debug "${H_EXPANDED[@]}"
       if [ "$OP" == "P" ]; then
         p_debug "pushing ${H_EXPANDED[@]}"
@@ -44,11 +44,34 @@ function runin() {
   if [ "$SSHUSER" != "" ]; then
     HOST="${SSHUSER}@${HOST}"
   fi
+  local n
+  local STR_ENV="export RUNALL_HOST=$HOST
+export RUNALL_COMMAND=\"$@\""
+  for ((n=0;n<${#_ENV_VARS[@]};n++)); do
+    STR_ENV="${STR_ENV}
+export ${_ENV_VARS[$n]}=\"${_ENV_VALUES[$n]}\""
+  done
   ssh $SSHOPTIONS "$HOST" "${COMMAND[@]}" <<$_RUN_SEPARATOR
-export BASHC_HOST=$HOST
-export BASHC_COMMAND="$@"
+$(echo "$STR_ENV")
 $@
 $_RUN_SEPARATOR
+}
+
+_ENV_VARS=()
+_ENV_VALUES=()
+
+function parse_env_var() {
+  local ENV_STR="$1"
+  local KEY VALUE
+
+  if [[ "$ENV_STR" =~ ^[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+    IFS='=' read KEY VALUE <<< "$ENV_STR"
+    _ENV_VARS=( "${_ENV_VARS[@]}" "$KEY" )
+    _ENV_VALUES=( "${_ENV_VALUES[@]}" "$VALUE" )
+    return 0
+  else
+    return 1
+  fi
 }
 
 function excludehosts() {

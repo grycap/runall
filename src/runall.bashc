@@ -91,6 +91,12 @@ CONFIGFILE="/etc/runall/runall.conf /etc/runall.conf etc/runall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
+    --env-var|-e)           bashc.parameters_next
+                            PARAM="$(bashc.parameters_current)"
+                            if ! parse_env_var "$PARAM"; then
+                              bashc.finalize 1 "bad format for env variable $PARAM"
+                            fi
+                            ;;
     --user|-u)              bashc.parameters_next
                             SSHUSER="$(bashc.parameters_current)";;
     --shell|-s)             bashc.parameters_next
