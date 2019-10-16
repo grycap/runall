@@ -93,6 +93,12 @@ while bashc.parameters_next; do
   case "$PARAM" in
     --section|-s)           bashc.parameters_next
                             SECTION="$(bashc.parameters_current)";;
+    --env-var|-e)           bashc.parameters_next
+                            PARAM="$(bashc.parameters_current)"
+                            if ! parse_env_var "$PARAM"; then
+                              bashc.finalize 1 "bad format for env variable $PARAM"
+                            fi
+                            ;;
     --user|-u)              bashc.parameters_next
                             SSHUSER="$(bashc.parameters_current)";;
     --shell|-s)             bashc.parameters_next

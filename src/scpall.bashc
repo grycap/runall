@@ -91,8 +91,17 @@ CONFIGFILE="/etc/runall/scpall.conf /etc/scpall.conf etc/scpall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
+<<<<<<< HEAD
     --section|-s)           bashc.parameters_next
                             SECTION="$(bashc.parameters_current)";;
+=======
+    --env-var|-e)           bashc.parameters_next
+                            PARAM="$(bashc.parameters_current)"
+                            if ! parse_env_var "$PARAM"; then
+                              bashc.finalize 1 "bad format for env variable $PARAM"
+                            fi
+                            ;;
+>>>>>>> cd60e4ecbb2fd589de6c0ad8702ef9b4a605d108
     --prefix|-p)            bashc.parameters_next
                             PREFIX="$(bashc.parameters_current)";;
     --folder|-f)            bashc.parameters_next
