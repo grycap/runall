@@ -10,7 +10,7 @@ function hostlist() {
       local H_EXPANDED=()
       while read HNAME; do
         H_EXPANDED+=("$HNAME")
-      done <<< "$(bashc.expand_ranges "$HOSTS")"
+      done <<< "$(bashc.expand_ranges "$HOST")"
       p_debug "${H_EXPANDED[@]}"
       if [ "$OP" == "P" ]; then
         p_debug "pushing ${H_EXPANDED[@]}"

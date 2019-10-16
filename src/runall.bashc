@@ -91,6 +91,8 @@ CONFIGFILE="/etc/runall/runall.conf /etc/runall.conf etc/runall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
+    --section|-s)           bashc.parameters_next
+                            SECTION="$(bashc.parameters_current)";;
     --user|-u)              bashc.parameters_next
                             SSHUSER="$(bashc.parameters_current)";;
     --shell|-s)             bashc.parameters_next
@@ -125,6 +127,11 @@ done
 verify_dependencies
 
 bashc.readconffiles "$CONFIGFILE" HOSTS PREFIX SSHOPTIONS SHELL
+
+_SEC_HOSTS="$(bashc.confsectionsget "$SECTION" "HOSTS")"
+if [ $? -eq 0 ]; then
+  HOSTS="$_SEC_HOSTS"
+fi
 
 if [ "$HOSTS" != "" ]; then
   if [ "$OVERRIDEHOSTS" != "true" ]; then

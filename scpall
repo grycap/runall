@@ -29,6 +29,7 @@ $0 <options> <files1> <file2> ... <fileN>
 
   <commandline>             The whole commandline that you want to run in the hosts.
                             * if not provided, it will be read from stdin.
+  --section | -s <section>  Use the HOSTS variable from section <section> in the configuration file
   --user | -u <username>    Sets the user to scp with (i.e. will scp <username>@host:... instead of 
                             the current user).
   --summarize | -S          Summarize what is going to happen and wait for user confirmation
@@ -70,6 +71,9 @@ function verify_dependencies() {
 }
 # Some basic includes
 _MUTED_EXPRESSIONS=()
+function p_mute() {
+  _MUTED_EXPRESSIONS+=("${1// /[[:space:]]}")
+}
 function p_errfile() {
   local i
   local E
@@ -119,7 +123,21 @@ function p_debug() {
     #done <<< "$@"
   fi
 }
+function bashc.set_logger() {
+  if [ "$1" != "" ]; then
+    LOGGER="[$1]"
+  else
+    LOGGER=
+  fi
+}
 _OLD_LOGGER=
+function bashc.push_logger() {
+  _OLD_LOGGER="$LOGGER"
+  LOGGER="$LOGGER[$1]"
+}
+function bashc.pop_logger() {
+  LOGGER="$_OLD_LOGGER"
+}
 function bashc.finalize() {
   # Finalizes the execution of the this script and shows an error (if provided)
   local ERR=$1
@@ -134,12 +152,38 @@ _BASHC_COMMANDLINE_ARRAY=( )
 function bashc.parameters_start() {
   _BASHC_current_param_id=-1
 }
+_BASHC_PARAMETERS_CHECKPOINT=0
+function bashc.parameters_checkpoint() {
+  _BASHC_PARAMETERS_CHECKPOINT=$_BASHC_current_param_id
+}
+function bashc.parameters_tocheckpoint() {
+  _BASHC_current_param_id=$_BASHC_PARAMETERS_CHECKPOINT
+}
 function bashc.parameters_next() {
   _BASHC_current_param_id=$((_BASHC_current_param_id+1))
   if ((_BASHC_current_param_id<${#_BASHC_COMMANDLINE_ARRAY[@]})); then
     return 0
   fi
   return 1
+}
+function bashc.parameters_more() {
+  if ((_BASHC_current_param_id<${#_BASHC_COMMANDLINE_ARRAY[@]})); then
+    return 0
+  fi
+  return 1
+}
+function bashc.parameters_prev() {
+  if ((_BASHC_current_param_id<=0)); then
+    return 1
+  fi
+  _BASHC_current_param_id=$((_BASHC_current_param_id-1))
+  return 0
+}
+function bashc.parameters_end() {
+  if ((_BASHC_current_param_id<${#_BASHC_COMMANDLINE_ARRAY[@]})); then
+    return 1
+  fi
+  return 0
 }
 function bashc.parameters_current() {
   printf "%s" "${_BASHC_COMMANDLINE_ARRAY[$_BASHC_current_param_id]}"
@@ -167,6 +211,57 @@ function bashc.trim() {
   A="${A%%+([[:space:]])}"
   shopt -u extglob
   echo "$A"
+}
+function bashc.ltrim() {
+  shopt -s extglob
+  local A="${1##+([[:space:]])}"
+  shopt -u extglob
+  echo "$A"
+}
+function bashc.rtrim() {
+  shopt -s extglob
+  local A="${1%%+([[:space:]])}"
+  shopt -u extglob
+  echo "$A"
+}
+function bashc.build_cmdline() {
+  local SHCMDLINE=""
+  local SPECIAL=( "|" ";" "&" "&&" ">" ">>" "2>" "2>>" "<" "<<" "<<<" "<(" "(" ")" )
+  local ISSPECIAL S
+  while [ $# -gt 0 ]; do
+    ISSPECIAL=
+    for S in "${SPECIAL[@]}"; do
+      if [ "$1" == "$S" ]; then 
+        ISSPECIAL=true
+        break
+      fi
+    done
+    if [ "$ISSPECIAL" == "true" ]; then
+      SHCMDLINE="${SHCMDLINE} $1"
+    else
+      SHCMDLINE="${SHCMDLINE} \"$1\""
+    fi
+    shift
+  done
+  echo "$SHCMDLINE"
+}
+function bashc.dump_list() {
+  bashc.dump_in_lines "$@"
+}
+function bashc.parameters_to_list() {
+  # Usage:
+  #  bashc.parameters_to_list ARRNAME p1 p2 p3 p4
+  # Effect:
+  #  ARRNAME
+  local AN="$1"
+  local n=0
+  shift
+  eval "$AN=( )"
+  while [ $# -gt 0 ]; do
+    read ${AN}[$n] <<< "$1"
+    n=$((n+1))
+    shift
+  done
 }
 function bashc.list_append() {
   # Usage:
@@ -208,23 +303,89 @@ function bashc.is_int() {
   fi
   return 1
 }
+function bashc.is_unsigned() {
+  if [[ "$1" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  return 1
+}
+function bashc.is_ip() {
+  if [[ "$1" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    while read -d "." F; do
+      if [ $F -gt 255 ]; then
+        return 1
+      fi
+    done <<< "${1}."
+    return 0
+  fi
+  return 1
+}
+function bashc.arrayze_cmd() {
+  # This function creates an array of parameters from a commandline. The special
+  # function of this function is that sometimes parameters are between quotes and the
+  # common space-separation is not valid. This funcion solves the problem of quotes and
+  # then a commandline can be invoked as "${ARRAY[@]}"
+  local AN="$1"
+  local _CMD="$2"
+  local R n=0
+  if [ "$_CMD" == "" ]; then return; fi
+  while read R; do
+    read ${AN}[$n] <<< "$R"
+    n=$((n+1))
+  done < <(printf "%s\n" "$_CMD" | xargs -n 1 printf "%s\n")
+}
+function bashc.lines_to_array() {
+  local AN="$1"
+  local LINES="$2"
+  local n=0
+  while read; do
+    read ${AN}[$n] <<< "$REPLY"
+    n=$((n+1))
+  done <<< "$LINES"
+}
+function bashc.sanitize() {
+  echo "$1" | sed -e 's/\\/\\\\/g; s/\//\\\//g; s/&/\\\&/g; s/\./\\\./g'
+}
+function bashc.cleanfile() {
+  # This function removes the comments, the starting and trailing whitespaces of lines and removes blank lines o a file
+  cat "$1" | sed 's/#.*//g' | sed 's/^[ \t]*//g' | sed 's/[ \t]*$//g' | sed '/^$/d'
+}
+function bashc.dump_in_lines() {
+  # Function that dumps (in the debug messages) a set of parameters, putting each of them in one numbered line.
+  #  It is of special interest to dump arrays
+  #  * this is a generalized version of bashc.dump_list
+  # Usage:
+  #  bashc.dump_in_lines "${ARR[@]}"
+  local n=0
+  while [ $# -gt 0 ]; do
+    p_debug "[$n]: $1"
+    shift
+    n=$((n+1))
+  done
+}
 function bashc.dump_vars() {
+  # Function that dumps (in the debug messages) the value of a list of variables
+  # Usage:
+  #  bashc.dump_vars V1 V2 V3 ...
   while [ $# -gt 0 ]; do
     p_debug "$1=${!1}"
     shift
   done
 }
-# Function that expands basic ranges in lines. It accepts multiple ranges that may be letters (e.g. [a-z]) or numbers (e.g. [3-5]); even
-#   the reverse order is accepted (e.g. 3-1).
-# 
-#   E.g. host0[0-4] is expanded into host00 host01 host02 host03 host04
-#   E.g. host[0-2][c-a] is expanded into host0c host0b host0a host1c host1b host1a host2c host2b host2a
 function bashc.expand_ranges() {
+  # Function that expands basic ranges in lines. It accepts multiple ranges that may be letters (e.g. [a-z]) or numbers (e.g. [3-5]); even
+  #   the reverse order is accepted (e.g. 3-1).
+  # 
+  # Usage:
+  #   bashc.expand_ranges host0[0-4] 
+  #     * echoes "host00 host01 host02 host03 host04" (in lines)
+  #   bashc.expand_ranges host[0-2][c-a] 
+  #     * echoes "host0c host0b host0a host1c host1b host1a host2c host2b host2a" (in lines)
   local NAME="$1"
   local v PATTERN CONTENT L_LIMIT U_LIMIT
   local RANGE="$(echo "$NAME" | grep -o '\[\([0-9]\{1,\}-[0-9]\{1,\}\|[a-z]-[a-z]\|[A-Z]-[A-Z]\)\]' | head -1)"
   if [ "$RANGE" != "" ]; then
-    RANGE="${RANGE:1:-1}"
+    RANGE="${RANGE:1:${#RANGE}-2}"
     PATTERN="\[${RANGE}\]"
     p_debug "range detected: $RANGE"
     IFS='-' read L_LIMIT U_LIMIT <<< "$RANGE"
@@ -237,8 +398,6 @@ function bashc.expand_ranges() {
   echo $NAME
   return 1
 }
-# Reads a configuration file and set its variables (removes comments, blank lines, trailing spaces, etc. and
-# then reads KEY=VALUE settings)
 function bashc.readconffiles() {
   CONFIGFILES="$1"
   shift
@@ -258,6 +417,15 @@ function bashc.readconffiles() {
     fi
   done
 }
+#if ! which envsubst > /dev/null 2>&1; then
+    function envsubst() {
+        local line
+        while read line; do
+            line=$( echo "$line" | sed 's/"/\\"/g' )
+            eval "echo \"${line}\""
+        done <<< "$(cat)"
+    }
+#fi
 function bashc.readconffile() {
   local _CONF_FILE="$1"
   # If the config file does not exist return failure
@@ -265,7 +433,7 @@ function bashc.readconffile() {
     return 255
   fi
   # First we read the config file
-  _TXT_CONF="$(cat "$_CONF_FILE" | sed 's/^[ \t]*//g' | sed 's/[ \t]*$//g' | sed '/^$/d')"
+  _TXT_CONF="$(cat "$_CONF_FILE" | sed $'s/^[ \t]*//g' | sed $'s/[ \t]*$//g' | sed '/^$/d')"
   shift
   if [ $# -gt 0 ]; then
     bashc.readconf "$_TXT_CONF" "$@"
@@ -274,42 +442,150 @@ function bashc.readconffile() {
   fi
   return $?
 }
-function bashc.readconf() {
+function __find_section_id() {
+  local i
+  for ((i=0;i<${#BASHC_SECTIONS_AVAILABLE[@]};i=i+1)); do
+    if [ "${BASHC_SECTIONS_AVAILABLE[$i]}" == "$1" ]; then
+      echo $i
+      return 0
+    fi
+  done
+  echo "${1//[[:alpha:]]/}"
+}
+function __keyinsection() {
+  # local S="${1// /_XX_}"
+  local S="$(__find_section_id "$1")"
+  local K="$2"
+  if [ "$S" != "" ]; then
+    K="_CONF_S_${S}_K_$K"
+  fi
+  echo "$K"
+}
+BASHC_SECTIONS_AVAILABLE=( )
+function bashc.confsections() {
+  local i
+  for i in "${BASHC_SECTIONS_AVAILABLE[@]}"; do
+    echo "$i"
+  done
+}
+function bashc.confsectionsset() {
+  local SECTION="$1"
+  local KEY="$2"
+  local VAL="$3"
+  if [ "$SECTION" == "" ]; then return 1; fi
+  if [ "$KEY" == "" ]; then return 1; fi
+  KEY="$(__keyinsection "$SECTION" "$KEY")"
+  read $KEY <<< "$VAL"
+}
+function bashc.confsectionsget() {
+  local SECTION="$1"
+  local KEY="$2"
+  if [ "$SECTION" == "" ]; then return 1; fi
+  if [ "$KEY" == "" ]; then return 1; fi
+  KEY="$(__keyinsection "$SECTION" "$KEY")"
+  echo "${!KEY}"
+  if [ "$KEY" == "$2" ]; then
+    # The section does not exist
+    return 1
+  else
+    # The section exists and we'll check if 
+    if [ "${!KEY+x}" == "" ]; then
+      return 1
+    fi
+  fi 
+  return 0
+}
+function bashc.confsectionssetdefault() {
+  local SECTION="$1"
+  local KEY="$2"
+  local DEFVAL="$3"
+  if [ "$SECTION" == "" ]; then return 1; fi
+  if [ "$KEY" == "" ]; then return 1; fi
+  KEY="$(__keyinsection "$SECTION" "$KEY")"
+  if [ -z "${!KEY+x}" ]; then
+    read $KEY <<< "$DEFVAL"
+  fi
+  return 0
+}
+function bashc.readconf_toarrays() {
+  local ARR_VARS="$1"
+  local ARR_VALUES="$2"
+  shift
+  shift
+  unset "$ARR_VARS"
+  unset "$ARR_VALUES"
+  local VAR_IDX=0
   local _TXT_CONF="$1"
   local _CURRENT_KEY _CURRENT_VALUE
   local L
   local _VALID_KEYS=( )
+  BASHC_SECTIONS_AVAILABLE=( )
   # Now read the valid keys
   shift
   bashc.list_append _VALID_KEYS "$@"
   local _EXITCODE=0
   local MULTILINE_KEY=
+  local MULTILINE_SEP=
   local MULTILINE_BUFFER=
+  local _CURRENT_SECTION=
   # Let's read the lines
-  while read L; do
+  while read; do
+    L="$REPLY"
     if [ "$MULTILINE_KEY" != "" ]; then
       MULTILINE_BUFFER="${MULTILINE_BUFFER}\n${L}"
-      if [[ "$L" =~ [^\"]*\"[[:blank:]]*$ ]]; then
-        _CURRENT_KEY="$MULTILINE_KEY"
-        _CURRENT_VALUE="$MULTILINE_BUFFER"
-        MULTILINE_KEY=
-        MULTILINE_BUFFER=
-      else
+      if [ "$MULTILINE_SEP" == "\"" ]; then
+        if ! [[ "$L" =~ [^\"]*\"[[:blank:]]*$ ]]; then
+          continue
+        fi
+      fi
+      if [ "$MULTILINE_SEP" == "'" ]; then
+        if ! [[ "$L" =~ [^\']*\'[[:blank:]]*$ ]]; then
+          continue
+        fi
+      fi
+      _CURRENT_KEY="$MULTILINE_KEY"
+      _CURRENT_VALUE="$MULTILINE_BUFFER"
+      MULTILINE_KEY=
+      MULTILINE_BUFFER=
+      MULTILINE_SEP=
+    else
+      if [[ "$L" =~ ^[[:blank:]]*\[.*$ ]]; then
+        _CURRENT_SECTION="$(bashc.trim "$L")"
+        _CURRENT_SECTION="${_CURRENT_SECTION:1:${#_CURRENT_SECTION}-2}"
+        # local I_SECTION=$(eval "echo \${#$ARR_SECTIONS[@]}")
+        # read -d '\0' "$ARR_SECTIONS[$I_SECTION]" <<< "$_CURRENT_SECTION"
+        local I_SECTION=${#BASHC_SECTIONS_AVAILABLE[@]}
+        BASHC_SECTIONS_AVAILABLE[$I_SECTION]="$_CURRENT_SECTION"
+        # BASHC_SECTIONS_AVAILABLE=( "${BASHC_SECTIONS_AVAILABLE[@]}" "$_CURRENT_SECTION" )
         continue
       fi
-    else
       if [[ "$L" =~ ^[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*=\"[^\"]*$ ]]; then
         IFS='=' read _CURRENT_KEY _CURRENT_VALUE <<< "$L"
         MULTILINE_KEY="$_CURRENT_KEY"
         MULTILINE_BUFFER="$_CURRENT_VALUE"
+        MULTILINE_SEP="\""
         continue
       else
-        if [[ "$L" =~ ^[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+        if [[ "$L" =~ ^[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*=\'[^\']*$ ]]; then
           IFS='=' read _CURRENT_KEY _CURRENT_VALUE <<< "$L"
+          MULTILINE_KEY="$_CURRENT_KEY"
+          MULTILINE_BUFFER="$_CURRENT_VALUE"
+          MULTILINE_SEP="'"
+          continue
         else
-          if [ "${L%%\#*}" != "" ]; then
-            p_error "invalid configuration line '$L'"
-            _EXITCODE=$((_EXITCODE+1))
+          if [[ "$L" =~ ^[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            IFS='=' read _CURRENT_KEY _CURRENT_VALUE <<< "$L"
+            _CURRENT_VALUE="$(bashc.trim "$_CURRENT_VALUE")"
+            if [ "${_CURRENT_VALUE::1}" != "\"" -a "${_CURRENT_VALUE: -1}" != "\"" ]; then
+              # If it did not begin and end with quotes, let's assume that it is a whole line string 
+              # and we will quote it (just in case that it has inside-quotes)
+              _CURRENT_VALUE="\"$(echo "$_CURRENT_VALUE" | sed 's/"/\\"/g')\""
+            fi
+          else
+            if [ "${L%%\#*}" != "" ]; then
+              p_error "invalid configuration line '$L'"
+              _EXITCODE=$((_EXITCODE+1))
+            fi
           fi
         fi
       fi
@@ -321,27 +597,77 @@ function bashc.readconf() {
       p_error "too errors to consider this file"
       return $_EXITCODE
     fi
+    p_debug "current value: $_CURRENT_VALUE"
     _CURRENT_VALUE="$(bashc.cleanvalue "$_CURRENT_VALUE")"
     if [ $? -ne 0 ]; then
       p_warning "ignoring invalid value $_CURRENT_VALUE for key $_CURRENT_KEY"
       _EXITCODE=$((_EXITCODE+1))
     else
-      _CURRENT_VALUE="$(printf "$_CURRENT_VALUE" | envsubst)"
+      _CURRENT_VALUE="$(printf -- "$_CURRENT_VALUE" | envsubst)"
       if [ ${#_VALID_KEYS[@]} -eq 0 ] || bashc.in_list _VALID_KEYS $_CURRENT_KEY; then
-        read -d '\0' "$_CURRENT_KEY" <<< "${_CURRENT_VALUE}"
+        _CURRENT_KEY="$(__keyinsection "$_CURRENT_SECTION" "$_CURRENT_KEY")"
+        # read -d '\0' "$_CURRENT_KEY" <<< "${_CURRENT_VALUE}"
         # The value is exported so that it is available for the others subprocesses
-        export $_CURRENT_KEY
+        read -d '\0' "$ARR_VARS[$VAR_IDX]" <<< "$_CURRENT_KEY"
+        read -d '\0' "$ARR_VALUES[$VAR_IDX]" <<< "$_CURRENT_VALUE"
+        VAR_IDX=$((VAR_IDX+1))
+        # export $_CURRENT_KEY
       else
         p_warning "$_CURRENT_KEY ignored"
       fi
-      p_debug "$_CURRENT_KEY=$_CURRENT_VALUE"
+      p_debug "config found: $_CURRENT_KEY=$_CURRENT_VALUE"
       _CURRENT_KEY=
       _CURRENT_VALUE=
     fi
   done <<< "$_TXT_CONF"
   return $_EXITCODE
 }
+function bashc.readconf() {
+  local _BASHC_CONFIG_VALUES=( )
+  local _BASHC_CONFIG_VARS=( )
+  bashc.readconf_toarrays _BASHC_CONFIG_VARS _BASHC_CONFIG_VALUES "$@" 
+  local n
+  for ((n=0;n<${#_BASHC_CONFIG_VARS[@]};n++)); do
+    _CURRENT_KEY="${_BASHC_CONFIG_VARS[$n]}"
+    _CURRENT_VALUE="${_BASHC_CONFIG_VALUES[$n]}"
+    read -d '\0' "$_CURRENT_KEY" <<< "${_CURRENT_VALUE}"
+    p_debug "exporting: $_CURRENT_KEY"
+    export $_CURRENT_KEY
+  done
+}
 function bashc.cleanvalue() {
+  local A="$1"
+  local VALUE=
+  local STILL_WORKING="true"
+  while [ "$STILL_WORKING" == "true" ]; do
+    STILL_WORKING="false"
+    if [[ "$A" =~ ^[^\#\"\']+ ]]; then
+      VALUE="${VALUE}${BASH_REMATCH[0]}"
+      A="${A:${#BASH_REMATCH[0]}}"
+      STILL_WORKING="true"
+    fi
+    if [ "$STILL_WORKING" == "false" ] && [[ "$A" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\" ]]; then
+      VALUE="${VALUE}${BASH_REMATCH[1]}"
+      A="${A:${#BASH_REMATCH[0]}}"
+      STILL_WORKING="true"
+    fi
+    if [ "$STILL_WORKING" == "false" ] && [[ "$A" =~ ^\'([^\']*)\' ]]; then
+      VALUE="${VALUE}${BASH_REMATCH[1]}"
+      A="${A:${#BASH_REMATCH[0]}}"
+      STILL_WORKING="true"
+    fi
+  done
+  echo "$VALUE"
+  A="$(bashc.trim "$A")"
+  if [ "${A:0:1}" == "#" ]; then
+    return 0
+  fi
+  if [ "$A" != "" ]; then
+    return 1
+  fi
+  return 0
+}
+function bashc.cleanvalue_working() {
   local A="$1"
   local VALUE=
   local STILL_WORKING="true"
@@ -373,7 +699,7 @@ function bashc.cleanvalue() {
   fi
   return 0
 }
-VERSION=1.2-beta.0
+VERSION=1.3-beta.0
 _HOSTS_LIST=( )
 _EXCLUDED_HOSTS_LIST=( )
 function hostlist() {
@@ -385,7 +711,7 @@ function hostlist() {
       local H_EXPANDED=()
       while read HNAME; do
         H_EXPANDED+=("$HNAME")
-      done <<< "$(bashc.expand_ranges "$HOSTS")"
+      done <<< "$(bashc.expand_ranges "$HOST")"
       p_debug "${H_EXPANDED[@]}"
       if [ "$OP" == "P" ]; then
         p_debug "pushing ${H_EXPANDED[@]}"
@@ -418,6 +744,8 @@ function runin() {
     HOST="${SSHUSER}@${HOST}"
   fi
   ssh $SSHOPTIONS "$HOST" "${COMMAND[@]}" <<$_RUN_SEPARATOR
+export BASHC_HOST=$HOST
+export BASHC_COMMAND="$@"
 $@
 $_RUN_SEPARATOR
 }
@@ -449,6 +777,8 @@ CONFIGFILE="/etc/runall/scpall.conf /etc/scpall.conf etc/scpall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
+    --section|-s)           bashc.parameters_next
+                            SECTION="$(bashc.parameters_current)";;
     --prefix|-p)            bashc.parameters_next
                             PREFIX="$(bashc.parameters_current)";;
     --folder|-f)            bashc.parameters_next
@@ -478,6 +808,10 @@ while bashc.parameters_next; do
 done
 verify_dependencies
 bashc.readconffiles "$CONFIGFILE" HOSTS SCPOPTIONS SSHOPTIONS
+_SEC_HOSTS="$(bashc.confsectionsget "$SECTION" "HOSTS")"
+if [ $? -eq 0 ]; then
+  HOSTS="$_SEC_HOSTS"
+fi
 if [ "$HOSTS" != "" ]; then
   if [ "$OVERRIDEHOSTS" != "true" ]; then
     hostlist P "$HOSTS"

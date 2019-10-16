@@ -30,6 +30,7 @@ $0 <options> <files1> <file2> ... <fileN>
 
   <commandline>             The whole commandline that you want to run in the hosts.
                             * if not provided, it will be read from stdin.
+  --section | -s <section>  Use the HOSTS variable from section <section> in the configuration file
   --user | -u <username>    Sets the user to scp with (i.e. will scp <username>@host:... instead of 
                             the current user).
   --summarize | -S          Summarize what is going to happen and wait for user confirmation
@@ -90,6 +91,8 @@ CONFIGFILE="/etc/runall/scpall.conf /etc/scpall.conf etc/scpall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
+    --section|-s)           bashc.parameters_next
+                            SECTION="$(bashc.parameters_current)";;
     --prefix|-p)            bashc.parameters_next
                             PREFIX="$(bashc.parameters_current)";;
     --folder|-f)            bashc.parameters_next
@@ -121,6 +124,11 @@ done
 verify_dependencies
 
 bashc.readconffiles "$CONFIGFILE" HOSTS SCPOPTIONS SSHOPTIONS
+
+_SEC_HOSTS="$(bashc.confsectionsget "$SECTION" "HOSTS")"
+if [ $? -eq 0 ]; then
+  HOSTS="$_SEC_HOSTS"
+fi
 
 if [ "$HOSTS" != "" ]; then
   if [ "$OVERRIDEHOSTS" != "true" ]; then
