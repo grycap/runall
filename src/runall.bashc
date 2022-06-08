@@ -30,6 +30,7 @@ $0 <options> -- [ <commandline> ]
 
   <commandline>             The whole commandline that you want to run in the hosts.
                             * if not provided, it will be read from stdin.
+  --group | -g <group>      Use the HOSTS variable from group <group> in the configuration file
   --user | -u <username>    Sets the user to ssh with (i.e. will ssh <username>@host instead of ssh host)
   --localhost | -l          Runs the command also in localhost
   --shell | -s <shell command>
@@ -39,6 +40,7 @@ $0 <options> -- [ <commandline> ]
   --ask | -a                Confirm each command before running it in the destination host
                             (this will not happen when running in background)
   --override-hosts | -O     Override the list of hosts in the configuration file
+  --infile | -i <filename>  Execute the command in the file <filename>
   --hostlist | -H <hostlist>
                             The list of hosts where the command is being run. This parameter can
                             appear as many time as needed. The format is a comma separated list of
@@ -91,7 +93,7 @@ CONFIGFILE="/etc/runall/runall.conf /etc/runall.conf etc/runall.conf"
 while bashc.parameters_next; do
   PARAM="$(bashc.parameters_current)"
   case "$PARAM" in
-    --section|-s)           bashc.parameters_next
+    --group|-g)             bashc.parameters_next
                             SECTION="$(bashc.parameters_current)";;
     --env-var|-e)           bashc.parameters_next
                             PARAM="$(bashc.parameters_current)"
@@ -103,6 +105,8 @@ while bashc.parameters_next; do
                             SSHUSER="$(bashc.parameters_current)";;
     --shell|-s)             bashc.parameters_next
                             OVERRIDESHELL="$(bashc.parameters_current)";;
+    --infile|-i)            bashc.parameters_next
+                            INFILE="$(bashc.parameters_current)";;
     --quiet|-q)             QUIET=true;;
     --localhost|-l)         RUNLOCALHOST=true;;
     --summarize|-S)         SUMMARIZE=true;;
@@ -173,8 +177,22 @@ if [ "$OVERRIDESHELL" != "" ]; then
   SHELL="$OVERRIDESHELL"
 fi
 
+if [ "$INFILE" != "" ]; then
+  if [ "$INFILE" == "-" ]; then
+    INFILE="$(mktemp /tmp/runall-XXXXXX)"
+    cat > "$INFILE"
+  fi
+  if [ ! -f "$INFILE" ]; then
+    bashc.finalize 1 "input file $INFILE does not exist"
+  fi
+  if [ "$COMMAND" != "" ]; then
+    bashc.finalize 1 "cannot use both command and input file"
+  fi
+  COMMAND="$(cat $INFILE)"
+fi
+
 # Read the command from the commandline
-if [ "$COMMAND" = "" ]; then
+if [ "$COMMAND" == "" ]; then
     p_out "Type a set of command and hit CTRL-D to issue them in the hosts (CTRL-C aborts)"
     COMMAND="$(cat)"
 fi

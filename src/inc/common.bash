@@ -45,8 +45,7 @@ function runin() {
     HOST="${SSHUSER}@${HOST}"
   fi
   local n
-  local STR_ENV="export RUNALL_HOST=$HOST
-export RUNALL_COMMAND=\"$@\""
+  local STR_ENV="export RUNALL_HOST=$HOST"
   for ((n=0;n<${#_ENV_VARS[@]};n++)); do
     STR_ENV="${STR_ENV}
 export ${_ENV_VARS[$n]}=\"${_ENV_VALUES[$n]}\""
